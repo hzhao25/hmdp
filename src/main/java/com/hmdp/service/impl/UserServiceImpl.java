@@ -117,9 +117,11 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
             Object value = entry.getValue();
             userMap.put(entry.getKey(), value != null ? value.toString() : null);
         }
+
         //8.3存储
         String tokenKey=RedisConstants.LOGIN_USER_KEY+token;
         stringRedisTemplate.opsForHash().putAll(tokenKey,userMap);
+
         //8.4设置token有效期
         stringRedisTemplate.expire(tokenKey,RedisConstants.LOGIN_USER_TTL,TimeUnit.MINUTES);
 
