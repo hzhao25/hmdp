@@ -7,9 +7,14 @@ import com.hmdp.mapper.VoucherOrderMapper;
 import com.hmdp.service.ISeckillVoucherService;
 import com.hmdp.service.IVoucherOrderService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.hmdp.utils.RedisConstants;
 import com.hmdp.utils.RedisIdWorker;
+import com.hmdp.utils.SimpleRedisLock;
 import com.hmdp.utils.UserHolder;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.springframework.aop.framework.AopContext;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,6 +37,12 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
     @Resource
     private RedisIdWorker redisIdWorker;
+
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
+
+    @Resource
+    private RedissonClient redissonClient;
 
     @Override
     public Result seckillVoucher(Long voucherId) {
@@ -64,7 +75,20 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         // 把锁粒度缩小到userId上，不同的userId不需要加锁，相同的userId才需要加锁
         //如果只用userId.toString()的话每次都是new一个新对象，即使值一样也不能锁住同一个用户
         //所以需要加intern，每次都在字符串池里找值一样的字符串地址返回
-        synchronized(userId.toString().intern()) {//仅锁定当前用户
+//        synchronized(userId.toString().intern()) {//仅锁定当前用户
+
+        //创建锁对象(加userId，锁粒度是用户id)
+//        SimpleRedisLock lock=new SimpleRedisLock("order:"+userId,stringRedisTemplate);
+        RLock lock = redissonClient.getLock("lock:order:" + userId);
+        //获取锁
+//        boolean isLock = lock.tryLock(1200);
+        boolean isLock = lock.tryLock();//默认过期时间30秒
+        //判断是否获取锁成功
+        if(!isLock){
+            //获取锁失败，返回错误信息
+            return Result.fail("不允许重复下单");
+        }
+        try {
             //8、返回订单id
             //Spring的事务管理是通过动态代理实现的，如果直接调用CreateVoucherOrder
             // 这里的事务不会自动实现，因为
@@ -74,7 +98,11 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             //这样CreateVoucherOrder就会被Spring管理启动事务了
             IVoucherOrderService proxy =(IVoucherOrderService) AopContext.currentProxy();
             return proxy.CreateVoucherOrder(voucherId);
+        }finally {
+            //释放锁
+            lock.unlock();
         }
+//        }
     }
 
     @Transactional
